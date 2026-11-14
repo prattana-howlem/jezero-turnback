@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Plan a Marswalk in Jezero Crater and see what happens when a delay cuts into your return reserve.">
+<title>Jezero Turnback — Marswalk simulator</title>
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.mjs"></script>
+</head>
+<body>
+<header class="masthead"><div><p class="subhead">Marswalk simulator / Jezero Crater</p><h1>Jezero Turnback</h1></div><span class="budget-label">90 min mission · 15 min reserve</span></header>
+<main>
+<section class="field" aria-label="Jezero delta map and simulation controls">
+  <div class="toolbar">
+    <h2>Western delta</h2>
+    <div class="layers"><label><input type="checkbox" id="slope"> Slope</label><label><input type="checkbox" id="rover" checked> Rover traverse</label></div>
+  </div>
+  <div class="map" id="map">
+    <canvas id="terrain" aria-label="Shaded HiRISE terrain with Marswalk routes and Perseverance's traverse"></canvas>
+    <div class="markers" id="markers"></div>
+    <div class="north" aria-label="North points up">↑ N</div>
+    <div class="scale"><span></span> 250 m</div>
+    <div class="map-legend"><span class="swatch rover"></span> Perseverance <span class="swatch astronaut"></span> Astronaut</div>
+    <div id="slopeLegend" class="slope-legend" hidden><span>Easy &lt;12°</span><span>Hard 12–25°</span><span>Unwalkable &gt;25°</span></div>
+    <article class="stop-card" id="stopCard" hidden></article>
+  </div>
+  <section class="controls" aria-label="Marswalk controls">
+    <div class="actions">
+      <button id="play" class="primary" type="button">▶ Play</button>
+      <button id="delay" type="button" disabled>+ Inject 20-min delay</button>
+      <button id="reset" type="button">Reset</button>
+    </div>
+    <div class="scrubber"><label for="clock">Mission elapsed <output id="elapsed">0 min</output></label><input id="clock" type="range" min="0" max="90" step="0.1" value="0"></div>
+    <p id="instruction">Press Play to walk to Stop 1, then inject the delay.</p>
+  </section>
+</section>
+<aside class="planning" aria-label="Mission plan">
+  <section class="decision" id="decision" data-state="go" aria-live="polite">
+    <p class="subhead">Crew decision</p><h2 id="decisionTitle">Time for Stop 2</h2><p id="reason">Loading mission plan…</p>
+  </section>
+  <section class="panel">
+    <div class="panel-title"><h2>Time budget</h2><span>90 min total</span></div>
+    <div class="timeline"><div id="segments" class="segments"></div><span id="now" class="now"></span><span id="overrun" class="overrun" hidden></span></div>
+    <div class="timeline-labels"><span>Start</span><span>Reserve begins at 75 min</span><span>90 min</span></div>
+    <p class="timing-key"><i class="walk-key"></i> Walk <i class="task-key"></i> Science <i class="reserve-key"></i> Reserve</p>
+    <ol id="steps"></ol>
+  </section>
+  <section class="panel">
+    <div class="panel-title"><h2>Route comparison</h2></div>
+    <table><thead><tr><th scope="col">Route</th><th scope="col">Distance</th><th scope="col">Climb</th><th scope="col">Max slope</th><th scope="col">Walk</th></tr></thead><tbody id="routes"></tbody></table>
+    <label class="route-switch" for="route">Active route <select id="route"></select></label>
+  </section>
+  <section class="panel conditions"><div class="panel-title"><h2>Conditions</h2><span>Archived MEDA reading</span></div><div id="weather"></div></section>
+  <details class="panel assumptions" open><summary>Simulation assumptions</summary><p>A 90-minute mission includes a 15-minute return reserve. Flat-ground pace is 0.7 m/s. Travel time increases 3.5% per degree of sampled slope. Routes avoid sampled slopes above 25°. The habitat, walking model, science tasks and delay are simulated.</p></details>
+</aside>
+</main>
+<footer><p>Terrain by USGS Astrogeology from <a href="https://www.usgs.gov/data/mars-2020-terrain-relative-navigation-hirise-dtm-mosaic">MRO HiRISE</a>. Traverse, sites and conditions from <a href="https://science.nasa.gov/mission/mars-2020-perseverance/location-map/">NASA/JPL Mars 2020</a>.</p><p>Codex assisted with data processing, implementation and demo materials.</p></footer>
+</body>
+</html>
