@@ -14,25 +14,41 @@
 <section class="field" aria-label="Jezero delta map and simulation controls">
   <div class="toolbar">
     <h2>Western delta</h2>
-    <div class="layers"><label><input type="checkbox" id="slope"> Slope</label><label><input type="checkbox" id="rover" checked> Rover traverse</label></div>
-  </div>
-  <div class="map" id="map">
-    <canvas id="terrain" aria-label="Shaded HiRISE terrain with Marswalk routes and Perseverance's traverse"></canvas>
-    <div class="markers" id="markers"></div>
-    <div class="north" aria-label="North points up">↑ N</div>
-    <div class="scale"><span></span> 250 m</div>
-    <div class="map-legend"><span class="swatch rover"></span> Perseverance <span class="swatch astronaut"></span> Astronaut</div>
-    <div id="slopeLegend" class="slope-legend" hidden><span>Easy &lt;12°</span><span>Hard 12–25°</span><span>Unwalkable &gt;25°</span></div>
-    <article class="stop-card" id="stopCard" hidden></article>
+    <div class="layers">
+      <label><input type="checkbox" id="reach" checked> Reach and return</label>
+      <label><input type="checkbox" id="slope"> Slope</label>
+      <label><input type="checkbox" id="rover" checked> Rover traverse</label>
+      <label><input type="checkbox" id="hillshade"> Elevation shade</label>
+    </div>
   </div>
   <section class="controls" aria-label="Marswalk controls">
     <div class="actions">
       <button id="play" class="primary" type="button">▶ Play</button>
       <button id="delay" type="button" disabled>+ Inject 20-min delay</button>
       <button id="reset" type="button">Reset</button>
+      <button id="openTour" type="button">3D fly-through</button>
     </div>
     <div class="scrubber"><label for="clock">Mission elapsed <output id="elapsed">0 min</output></label><input id="clock" type="range" min="0" max="90" step="0.1" value="0"></div>
     <p id="instruction">Press Play to walk to Stop 1, then inject the delay.</p>
+  </section>
+  <div class="map" id="map">
+    <canvas id="terrain" aria-label="HiRISE orthophoto of Jezero’s western delta"></canvas>
+    <canvas id="reachCanvas" aria-hidden="true"></canvas>
+    <canvas id="tracks" aria-hidden="true"></canvas>
+    <div class="markers" id="markers"></div>
+    <div class="north" aria-label="North points up">↑ N</div>
+    <div class="scale"><span></span> 250 m</div>
+    <div class="map-legend" id="reachLegend">
+      <div><span class="swatch reach"></span> <strong>Reach and return</strong></div>
+      <span>Walking only · keeps 15 min in reserve</span>
+    </div>
+    <div class="map-key"><span class="swatch rover"></span> Perseverance <span class="swatch astronaut"></span> Astronaut <span class="swatch habitat"></span> Habitat</div>
+    <div id="slopeLegend" class="slope-legend" hidden><span>Easy &lt;12°</span><span>Hard 12–25°</span><span>Unwalkable &gt;25°</span></div>
+    <article class="stop-card" id="stopCard" hidden></article>
+  </div>
+  <section class="profile" aria-labelledby="profileTitle">
+    <div><h2 id="profileTitle">Elevation along the walk</h2><output id="profileReading"></output></div>
+    <canvas id="profile" aria-label="Elevation above habitat by distance walked, with a marker for the astronaut’s current position"></canvas>
   </section>
 </section>
 <aside class="planning" aria-label="Mission plan">
@@ -52,9 +68,18 @@
     <label class="route-switch" for="route">Active route <select id="route"></select></label>
   </section>
   <section class="panel conditions"><div class="panel-title"><h2>Conditions</h2><span>Archived MEDA reading</span></div><div id="weather"></div></section>
-  <details class="panel assumptions" open><summary>Simulation assumptions</summary><p>A 90-minute mission includes a 15-minute return reserve. Flat-ground pace is 0.7 m/s. Travel time increases 3.5% per degree of sampled slope. Routes avoid sampled slopes above 25°. The habitat, walking model, science tasks and delay are simulated.</p></details>
+  <details class="panel assumptions"><summary>Simulation assumptions</summary><p>A 90-minute mission includes a 15-minute return reserve. Flat-ground pace is 0.7 m/s. Travel time increases 3.5% per degree of sampled slope. Routes avoid sampled slopes above 25°. The reach area estimates a walk from the crew’s current position to each point and back to the habitat. Science task time is included in the mission plan. The habitat, walking model, science tasks and delay are simulated.</p></details>
 </aside>
 </main>
-<footer><p>Terrain by USGS Astrogeology from <a href="https://www.usgs.gov/data/mars-2020-terrain-relative-navigation-hirise-dtm-mosaic">MRO HiRISE</a>. Traverse, sites and conditions from <a href="https://science.nasa.gov/mission/mars-2020-perseverance/location-map/">NASA/JPL Mars 2020</a>.</p><p>Codex assisted with data processing, implementation and demo materials.</p></footer>
+<dialog id="tour" aria-labelledby="tourTitle">
+  <header><div><h2 id="tourTitle">3D fly-through</h2><p id="tourRoute"></p></div><form method="dialog"><button>Close</button></form></header>
+  <canvas id="tourCanvas" aria-label="3D HiRISE terrain and selected traverse"></canvas>
+  <p id="tourStatus" role="status"></p>
+  <div class="tour-controls" id="tourControls" hidden>
+    <button id="tourPlay" type="button">Play fly-through</button>
+    <label>Fly-through progress <input id="tourProgress" type="range" min="0" max="100" step=".1" value="0"></label>
+  </div>
+</dialog>
+<footer><p>USGS Astrogeology HiRISE <a href="https://www.usgs.gov/data/mars-2020-terrain-relative-navigation-hirise-orthorectified-image-mosaic">orthophoto</a> and <a href="https://www.usgs.gov/data/mars-2020-terrain-relative-navigation-hirise-dtm-mosaic">elevation</a>. Traverse, sites and conditions from <a href="https://science.nasa.gov/mission/mars-2020-perseverance/location-map/">NASA/JPL Mars 2020</a>.</p><p>Codex assisted with data processing, implementation and demo materials.</p></footer>
 </body>
 </html>

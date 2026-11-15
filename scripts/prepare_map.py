@@ -1,19 +1,23 @@
 import csv
 import io
 import json
-from heapq import heappop, heappush
-from math import ceil, cos, hypot, radians
+from math import cos, radians
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
 import rasterio
+from rasterio.enums import Resampling
 from rasterio.windows import Window
 import requests
+
+from routing import WalkingGrid, export_reach, join_legs
 
 DATA = Path(__file__).resolve().parents[1] / 'public' / 'data'
 DTM = ('https://asc-pds-services.s3.us-west-2.amazonaws.com/mosaic/mars2020_trn/HiRISE/'
        'JEZ_hirise_soc_006_DTM_MOLAtopography_DeltaGeoid_1m_Eqc_latTs0_lon0_blend40.tif')
+ORTHO = ('https://asc-pds-services.s3.us-west-2.amazonaws.com/mosaic/mars2020_trn/HiRISE/'
+         'JEZ_hirise_soc_006_orthoMosaic_25cm_Eqc_latTs0_lon0_first.tif')
 ROVER = 'https://mars.nasa.gov/mmgis-maps/M20/Layers/json/M20_'
 MEDA = ('https://atmos.nmsu.edu/PDS/data/PDS4/Mars2020/mars2020_meda/'
         'data_calibrated_env/sol_0420_0539/sol_0461/')
@@ -66,6 +70,22 @@ def save_map(terrain):
     return slope
 
 
+def save_orthophoto():
+    with rasterio.open(ORTHO) as source:
+        if source.res != (0.25, 0.25) or source.crs.to_string() != 'ESRI:103885':
+            raise RuntimeError(f'Unexpected HiRISE orthophoto georeferencing: {source.crs} {source.res}')
+        row, col = source.index(LEFT, TOP)
+        if source.transform * (col, row) != (LEFT, TOP):
+            raise RuntimeError('Orthophoto and elevation grids are not aligned')
+        photo = source.read(1, window=Window(col, row, WIDTH * 4, HEIGHT * 4),
+                            out_shape=(HEIGHT * 2, WIDTH * 2), resampling=Resampling.average)
+    if np.any(photo == 0):
+        raise RuntimeError('Jezero orthophoto crop contains gaps')
+    black, white = np.percentile(photo, [1, 99])
+    contrasted = np.interp(photo, [black, white], [32, 243]).astype(np.uint8)
+    Image.fromarray(contrasted).save(DATA / 'hirise.jpg', quality=91, optimize=True)
+
+
 def rover_data():
     lines = get(ROVER + 'traverse.json').json()['features']
     segments = []
@@ -92,88 +112,28 @@ def pressure_reading():
             'pressure': float(row['BAROCAP1_PRESSURE'])}
 
 
-def route_leg(terrain, slope, start, finish, slope_penalty):
-    # Each graph edge samples the original 1 m raster along its full length.
-    moves = [(x, y) for x in (-STEP, 0, STEP) for y in (-STEP, 0, STEP) if x or y]
-    queue = [(0, start)]
-    parents, costs = {}, {start: 0}
-
-    def edge(a, b):
-        xs = np.rint(np.linspace(a[0], b[0], STEP + 2)).astype(int)
-        ys = np.rint(np.linspace(a[1], b[1], STEP + 2)).astype(int)
-        grades = slope[ys, xs]
-        return hypot((b[0] - a[0]) * EAST_SCALE, b[1] - a[1]), grades
-
-    # A scalar cache avoids duplicating raster sampling across search edges.
-    def allowed(a, b):
-        x, y = a
-        u, v = b
-        return max(slope[y, x], slope[v, u], slope[(v+y)//2, (u+x)//2]) <= 25
-
-    while queue:
-        _, point = heappop(queue)
-        if point == finish:
-            break
-        for dx, dy in moves:
-            neighbor = (point[0] + dx, point[1] + dy)
-            if not inside(neighbor) or not allowed(point, neighbor):
-                continue
-            distance, grades = edge(point, neighbor)
-            if grades.max() > 25:
-                continue
-            cost = costs[point] + distance * (1 + slope_penalty * float(grades.mean()))
-            if cost >= costs.get(neighbor, float('inf')):
-                continue
-            costs[neighbor], parents[neighbor] = cost, point
-            x, y = neighbor
-            heuristic = hypot((finish[0] - x) * EAST_SCALE, finish[1] - y)
-            heappush(queue, (cost + heuristic, neighbor))
-    else:
-        raise RuntimeError(f'No route from {start} to {finish}')
-
-    path = [finish]
-    while path[-1] != start:
-        path.append(parents[path[-1]])
-    path.reverse()
-    distance = climb = max_slope = minutes = 0
-    clocks = [0]
-    for a, b in zip(path, path[1:]):
-        length, grades = edge(a, b)
-        distance += length
-        climb += max(0, float(terrain[b[1], b[0]] - terrain[a[1], a[0]]))
-        max_slope = max(max_slope, float(grades.max()))
-        minutes += length * (1 + 0.035 * float(grades.mean())) / SPEED / 60
-        clocks.append(round(minutes, 4))
-    return {'points': path, 'clock': clocks, 'distance': round(distance, 1),
-            'climb': round(climb, 1), 'slope': round(max_slope, 1), 'minutes': round(minutes, 4)}
-
-
 def routes_for(terrain, slope):
-    routes = []
-    direct = [route_leg(terrain, slope, a, b, 0.06)
-              for a, b in [(HOME, STOP_1), (STOP_1, STOP_2), (STOP_2, HOME)]]
-    south = (944, 900)
-    first = route_leg(terrain, slope, HOME, south, 0.06)
-    second = route_leg(terrain, slope, south, STOP_1, 0.06)
-    alternate = {
-        'points': first['points'] + second['points'][1:],
-        'clock': first['clock'] + [round(first['minutes'] + t, 4) for t in second['clock'][1:]],
-        'slope': max(first['slope'], second['slope']),
-        **{key: round(first[key] + second[key], 4) for key in ('minutes', 'climb', 'distance')},
-    }
-    routes.append({'name': 'Direct approach', 'legs': direct})
-    routes.append({'name': 'South approach', 'legs': [alternate, *direct[1:]]})
-    return routes
+    grid = WalkingGrid(terrain, slope, STEP, EAST_SCALE, SPEED)
+    direct = grid.solve([HOME, STOP_1, STOP_2, HOME], penalty=0.005)
+    outbound = grid.solve([HOME, (944, 1012), STOP_1], penalty=0.11, limit=19)
+    alternate = grid.solve([STOP_1, STOP_2, HOME], penalty=0.14, limit=21)
+    routes = [
+        {'name': 'Direct traverse', 'legs': direct},
+        {'name': 'Southern detour', 'legs': [join_legs(*outbound), *alternate]},
+    ]
+    return routes, export_reach(grid, routes, HOME, DATA)
 
 
 def main():
     DATA.mkdir(parents=True, exist_ok=True)
     terrain = read_terrain()
     slope = save_map(terrain)
+    save_orthophoto()
+    routes, reach = routes_for(terrain, slope)
     lines, waypoints = rover_data()
     print('Sol 461:', [p for p in waypoints if p['sol'] == 461])
     result = {'width': WIDTH, 'height': HEIGHT, 'eastScale': EAST_SCALE, 'lines': lines,
-              'waypoints': waypoints, 'weather': pressure_reading(), 'routes': routes_for(terrain, slope)}
+              'waypoints': waypoints, 'weather': pressure_reading(), 'routes': routes, 'reach': reach}
     for route in result['routes']:
         print(route['name'], [(leg['distance'], leg['slope'], leg['minutes']) for leg in route['legs']])
     (DATA / 'map.json').write_text(json.dumps(result, separators=(',', ':')), encoding='utf-8')

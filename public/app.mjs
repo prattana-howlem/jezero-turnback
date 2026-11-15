@@ -1,20 +1,34 @@
-import { BUDGET, RESERVE, DELAY, STOP_1_TIME, plan, activeWalk } from "./model.mjs";
+import { BUDGET, RESERVE, DELAY, STOP_1_TIME, plan, walkState } from "./model.mjs";
+import { createReachLayer } from "./reach.mjs";
+import { createProfile } from "./profile.mjs";
 
 const byId = id => document.getElementById(id);
 const map = await fetch("./data/map.json").then(response => {
   if (!response.ok) throw new Error("The Jezero map data could not be loaded.");
   return response.json();
 });
-const [terrain, slope] = await Promise.all(["terrain.jpg", "slope.png"].map(file => {
+const [photo, terrain, slope, reachData] = await Promise.all([
+  ...["hirise.jpg", "terrain.jpg", "slope.png"].map(file => {
   const img = new Image();
   img.src = "./data/" + file;
   return img.decode().then(() => img);
-}));
-const canvas = byId("terrain");
-canvas.width = map.width;
-canvas.height = map.height;
-const context = canvas.getContext("2d");
-const palette = ["#b3ffe4", "#fff3ab"];
+  }),
+  fetch("./data/reach.bin").then(response => {
+    if (!response.ok) throw new Error("The reachability layer could not be loaded.");
+    return response.arrayBuffer();
+  }),
+]);
+const basemap = byId("terrain");
+const tracks = byId("tracks");
+for (const canvas of [basemap, tracks]) {
+  canvas.width = map.width;
+  canvas.height = map.height;
+}
+const background = basemap.getContext("2d");
+const context = tracks.getContext("2d");
+const reachLayer = createReachLayer(byId("reachCanvas"), map.reach, reachData, map);
+const profile = createProfile(byId("profile"), byId("profileReading"));
+const palette = ["#e3fff9", "#ffcb72"];
 const durations = route => route.legs.reduce((total, leg) => total + leg.minutes, 0);
 const stop2Time = BUDGET - RESERVE - STOP_1_TIME - Math.max(...map.routes.map(durations));
 const schedules = map.routes.map(route => plan(route, stop2Time));
@@ -49,6 +63,8 @@ let cardTrigger;
 let positionPin;
 let roverPins;
 let stopPin;
+let stopStatus;
+const stop2Position = map.routes[0].legs[1].points.at(-1);
 
 function path(points, color, width, dash = []) {
   context.strokeStyle = color;
@@ -64,10 +80,13 @@ function path(points, color, width, dash = []) {
 }
 
 function drawMap() {
-  context.drawImage(terrain, 0, 0);
+  const shade = byId("hillshade").checked;
+  background.drawImage(shade ? terrain : photo, 0, 0, map.width, map.height);
+  basemap.setAttribute("aria-label", shade ? "HiRISE elevation hillshade" : "HiRISE orthophoto of Jezero’s western delta");
   const showSlope = byId("slope").checked;
-  if (showSlope) context.drawImage(slope, 0, 0);
+  if (showSlope) background.drawImage(slope, 0, 0);
   byId("slopeLegend").hidden = !showSlope;
+  context.clearRect(0, 0, map.width, map.height);
   const showRover = byId("rover").checked;
   byId("map").classList.toggle("show-rover", showRover);
   roverPins.hidden = !showRover;
@@ -75,14 +94,14 @@ function drawMap() {
   const order = [1 - selected, selected];
   for (const i of order) {
     for (const leg of map.routes[i].legs) {
-      path(leg.points, "#172627", 10);
-      path(leg.points, delayed ? "#adafac" : palette[i], 5, delayed || i !== selected ? [13, 11] : []);
+      path(leg.points, delayed ? "#1726279c" : "#172627", delayed ? 7 : 12);
+      path(leg.points, delayed ? "#adafac" : palette[i], delayed ? 3 : 6, delayed || i !== selected ? [16, 12] : []);
     }
   }
   if (delayed) {
     const points = schedules[selected].returnLeg.points;
-    path(points, "#33201e", 17);
-    path(points, "#ffc2a3", 10);
+    path(points, "#321d18", 18);
+    path(points, "#ffad8e", 11);
   }
 }
 
@@ -127,6 +146,11 @@ function initMap() {
     pin.addEventListener("click", () => showCard(pin, stop.name, `<p><strong>${min(stop.time)} min</strong> · ${stop.task}</p><p>${stop.why}</p><a href="${stop.source}" target="_blank" rel="noreferrer">Perseverance observation</a>`));
     if (i === 1) stopPin = pin;
   });
+  stopStatus = document.createElement("span");
+  stopStatus.className = "stop-status";
+  stopStatus.hidden = true;
+  place(stopStatus, stop2Position);
+  byId("markers").append(stopStatus);
   roverPins = document.createElement("div");
   byId("markers").append(roverPins);
   for (const rover of map.waypoints) {
@@ -156,13 +180,9 @@ function renderRoutes() {
 function renderPlan() {
   const schedule = schedules[selected];
   const fullMargin = BUDGET - schedule.fullReturn;
-  const homeTime = delayed ? schedule.checkpoint + DELAY + schedule.returnLeg.minutes : schedule.fullReturn;
+  const homeTime = delayed ? schedule.earlyReturn : schedule.fullReturn;
   const returnMargin = BUDGET - homeTime;
-  const segments = delayed ? [
-    ...schedule.full.slice(0, 2),
-    { label: "Delay", duration: DELAY, kind: "delay" },
-    { label: "Walk home", leg: schedule.returnLeg, duration: schedule.returnLeg.minutes },
-  ] : schedule.full;
+  const segments = delayed ? schedule.retreat : schedule.full;
   const displaySegments = [
     ...segments,
     ...(returnMargin > RESERVE + 0.05 ? [{ label:"Buffer", duration:returnMargin - RESERVE, kind:"reserve" }] : []),
@@ -188,13 +208,26 @@ function renderPlan() {
   stopPin.classList.toggle("skipped", delayed);
   stopPin.title = stops[1].name + (delayed ? " (skipped)" : "");
   stopPin.setAttribute("aria-label", stopPin.title);
+  profile.updatePlan(segments, palette[selected]);
   drawMap();
   renderClock();
 }
 
 function endTime() {
   const schedule = schedules[selected];
-  return delayed ? schedule.checkpoint + DELAY + schedule.returnLeg.minutes : schedule.fullReturn;
+  return delayed ? schedule.earlyReturn : schedule.fullReturn;
+}
+
+function renderReach(walker) {
+  const visible = byId("reach").checked;
+  byId("reachCanvas").hidden = !visible;
+  byId("reachLegend").hidden = !visible;
+  if (visible) reachLayer.draw(walker, BUDGET - RESERVE - elapsed);
+  stopStatus.hidden = !delayed;
+  if (delayed) {
+    stopStatus.textContent = visible && !reachLayer.contains(stop2Position)
+      ? "Stop 2 outside reach" : "Stop 2 skipped";
+  }
 }
 
 function renderClock() {
@@ -212,7 +245,10 @@ function renderClock() {
     : atCheckpoint ? "Stop 1 complete. Inject the delay to see how the plan changes."
     : elapsed < schedule.checkpoint ? "Press Play to walk to Stop 1, then inject the delay."
     : "Continuing to Stop 2 on the original plan.";
-  place(positionPin, activeWalk(schedule, elapsed, delayed));
+  const walker = walkState(schedule, elapsed, delayed);
+  place(positionPin, walker.position);
+  renderReach(walker);
+  profile.updateWalker(walker);
 }
 
 function pause() {
@@ -249,8 +285,47 @@ function reset() {
 initMap();
 renderRoutes();
 renderPlan();
+
+const tour = byId("tour");
+let tourRun = 0;
+let disposeTour;
+byId("openTour").addEventListener("click", async () => {
+  pause();
+  renderClock();
+  const schedule = schedules[selected];
+  const run = ++tourRun;
+  byId("tourRoute").textContent = `${map.routes[selected].name} · ${delayed ? "Early return" : "Full walk"} · elevation exaggerated 1.6×`;
+  byId("tourControls").hidden = true;
+  byId("tourStatus").textContent = "Loading HiRISE terrain…";
+  tour.showModal();
+  try {
+    const { openFlythrough } = await import("./flythrough.mjs");
+    if (run !== tourRun) return;
+    const dispose = await openFlythrough(byId("tourCanvas"), map, photo,
+      delayed ? schedule.retreat : schedule.full, palette[selected],
+      { play: byId("tourPlay"), progress: byId("tourProgress") });
+    if (run !== tourRun) {
+      dispose();
+      return;
+    }
+    disposeTour = dispose;
+    byId("tourStatus").textContent = "";
+    byId("tourControls").hidden = false;
+  } catch (error) {
+    if (run === tourRun) byId("tourStatus").textContent = "3D could not open. Close this view to continue on the map.";
+    console.warn("3D fly-through", error);
+  }
+});
+tour.addEventListener("close", () => {
+  tourRun++;
+  disposeTour?.();
+  disposeTour = undefined;
+});
+
 byId("slope").addEventListener("change", drawMap);
 byId("rover").addEventListener("change", drawMap);
+byId("hillshade").addEventListener("change", drawMap);
+byId("reach").addEventListener("change", renderClock);
 byId("route").addEventListener("change", event => {
   selected = Number(event.target.value);
   reset();
